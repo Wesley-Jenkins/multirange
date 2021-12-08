@@ -56,6 +56,7 @@ module multirange;
     
     It is theoretically possible that you could get into a situation where all the slots are waiting on each other, if you are not careful.
     I can't guarantee such bugs don't already exist in these implementations below.
+    But you should always go over the multi-range in a round-robin manner. Otherwise, you will almost certainly loop forever.
     */
 
 import std.range;
@@ -157,8 +158,73 @@ auto toMulti(Rs...)(Rs rs) {
     return MultiWrapper(rs);
 }
 
-auto multijoin(Ms...)(Ms ms) {
-    /* ... */
+auto multitake(M, Is...)(M m, Is indices) {
+    static struct MultiTake {
+        import std.array : staticArray;
+        import std.range : iota;
+        
+        enum slots = staticArray!(Is.length.iota);
+        
+        M baseRange;
+        Is upper;
+        
+        Is pos;
+        
+        auto multiFront(size_t slot)() {
+            if (pos[slot] < upper[slot])
+                return baseRange.multiFront!slot;
+            
+            else
+                return typeof(return)(SlotState.SLOT_EMPTY);
+        }
+        
+        auto multiPopFront(size_t slot)() {
+            if (pos[slot] >= upper[slot])
+                return SlotReturn!void(SlotState.SLOT_EMPTY);
+            
+            auto ret = baseRange.multiPopFront!slot;
+            
+            if (ret.state == SlotState.SLOT_GOOD)
+                pos[slot] += 1;
+            
+            return ret;
+        }
+    }
+    
+    return MultiTake(m, indices);
+}
+
+auto multigenerate(Fs...)() {
+    import std.meta : staticMap;
+    import std.traits : ReturnType;
+    
+    alias slotTypes = staticMap!(ReturnType, Fs);
+    
+    struct MultiGenerate {
+        import std.array : staticArray;
+        import std.range : iota;
+        
+        enum slots = staticArray!(Fs.length.iota);
+        
+        this(bool) {
+            static foreach(i, F; Fs)
+                buffer[i] = F();
+        }
+        
+        slotTypes buffer;
+        
+        auto multiFront(size_t slot)() {
+            return slotReturn(buffer[slot]);
+        }
+        
+        auto multiPopFront(size_t slot)() {
+            buffer[slot] = Fs[slot]();
+            
+            return SlotReturn!void(SlotState.SLOT_GOOD);
+        }
+    }
+    
+    return MultiGenerate(false);
 }
 
 auto multichain(Ms...)(Ms ms) {
