@@ -1,0 +1,9 @@
+{
+	"authors": [
+		"Wesley Jenkins"
+	],
+	"copyright": "Copyright © 2021, Wesley Jenkins",
+	"description": "A library for multiranges",
+	"license": "zlib",
+	"name": "multirange"
+}

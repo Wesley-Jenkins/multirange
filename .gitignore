@@ -1,0 +1,15 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/multirange
+multirange.so
+multirange.dylib
+multirange.dll
+multirange.a
+multirange.lib
+multirange-test-*
+*.exe
+*.o
+*.obj
+*.lst
