@@ -1,12 +1,62 @@
 module multirange;
 /*
     A multirange contains multiple ranges in slots.
-    While this sounds simple, the interface is very complex.
-    It is recommempty that you do not use the interface itself; use the provided functions instead.
+    While this sounds simple, the interface is somewhat complex.
+    It is recommended that you do not use the interface itself; use the provided functions instead.
     Just look at the horrific implementation of multifilter if you want to see why it's discouraged.
-    The general interface is multiFront!(size_t index) and multiPopFront!(size_t index).
-    Note that sometimes, you can't get the front of a multirange, and sometimes you can't even pop the front!
-    A multirange might have more values, but you just can't read them or pop them currently. */
+    Many tiny corner cases creep into code using the interface.
+    
+    Multi-ranges are similar to normal D ranges, in that they are just implemented as standard functions (And one enum).
+    If a type provides these, then it is automatically a multi-range.
+    
+    Multi-range interface:
+        enum slots:
+            slots should be an enum array of size_t like [0, 1, 2] (Not necessarily in order),
+            indicating which slots this multi-range provides.
+        
+        auto multiFront(size_t slot)():
+            multiFront is the multi-range's analogue to range's front. It returns a SlotReturn!T rather than just T.
+            Inside SlotReturn!T is .state, which is of the type SlotState. The returned values have the following meaning:
+                SLOT_GOOD:
+                    Reading the front was successful. The front is inside the 'value' variable.
+                
+                SLOT_WAITING:
+                    For some reason, reading the front was not successful, but the stream is *not* empty.
+                    You should try again later, after popping some other slots.
+                    That does not mean you should pop this slot. You could lose an element if you do that.
+                
+                SLOT_EMPTY:
+                    The slot is empty.
+        
+        auto multiPopFront(size_t slot)():
+            multiPopFront is the multi-range's analogue to range's popFront. it returns SlotReturn!void (Essentially just SlotState).
+                SLOT_GOOD:
+                    The front was popped successfully.
+                    
+                SLOT_WAITING:
+                    For some reason, the front could not be popped, but the stream is *not* empty.
+                    You should try again later, after popping some other slots.
+                    If SLOT_WAITING is returned here, the state of the range should be identical to before calling. It is an implementation error
+                    if it is not identical.
+                    
+                SLOT_EMPTY:
+                    The slot is empty.
+    
+    The reason for this more complex interface is due to how multiple slots may depend on a single previous slot.
+    Consider the example,
+    ```
+     iota(10)
+    .toMulti!2
+    .arrays;
+    ```
+    
+    Here, this creates a multi-range where both slots depend on the same range. Therefore, we cannot pop this original range until both slots have been popped.
+    So, the purpose of a slot returning SLOT_WAITING has nothing to do with making it non-blocking. Instead, its purpose is to remove the requirement of buffering.
+    If you get SLOT_WAITING, then pop other slots, and eventually this slot should become readable or empty.
+    
+    It is theoretically possible that you could get into a situation where all the slots are waiting on each other, if you are not careful.
+    I can't guarantee such bugs don't already exist in these implementations below.
+    */
 
 import std.range;
 
