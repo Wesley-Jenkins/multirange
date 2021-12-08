@@ -162,8 +162,6 @@ auto multijoin(Ms...)(Ms ms) {
 }
 
 auto multichain(Ms...)(Ms ms) {
-    alias M = Ms[0];
-    
     static struct Multichain {
         enum slots = Ms[0].slots;
         
@@ -213,6 +211,66 @@ auto multichain(Ms...)(Ms ms) {
     }
     
     return Multichain(ms);
+}
+
+auto multichoose(M1, M2)(bool cond, M1 m1, M2 m2) {
+    assert(M1.slots == M2.slots);
+    
+    static struct MultiChoose {
+        enum slots = M1.slots;
+        
+        M1 baseRange1;
+        M2 baseRange2;
+        
+        immutable bool choice;
+        
+        auto multiFront(size_t slot)() {
+            if (choice)
+                return baseRange1.multiFront!slot;
+            else
+                return baseRange2.multiFront!slot;
+        }
+        
+        auto multiPopFront(size_t slot)() {
+            if (choice)
+                return baseRange1.multiPopFront!slot;
+            else
+                return baseRange2.multiPopFront!slot;
+        
+        }
+    }
+    
+    return MultiChoose(m1, m2, cond);
+}
+
+auto multichooseAmong(Ms...)(size_t index, Ms ms) {
+    static struct MultiChooseAmong {
+        enum slots = Ms[0].slots;
+        
+        Ms baseRange;
+        
+        immutable size_t choice;
+        
+        auto multiFront(size_t slot)() {
+            static foreach (i; 0 .. Ms.length) {
+                if (choice == i)
+                    return baseRange[i].multiFront!slot;
+            }
+            
+            assert(0);
+        }
+        
+        auto multiPopFront(size_t slot)() {
+            static foreach (i; 0 .. Ms.length) {
+                if (choice == i)
+                    return baseRange[i].multiPopFront!slot;
+            }
+            
+            assert(0);
+        }
+    }
+    
+    return MultiChooseAmong(ms, index);
 }
 
 /* Map a multi-range */
