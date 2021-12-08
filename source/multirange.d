@@ -107,6 +107,64 @@ auto toMulti(Rs...)(Rs rs) {
     return MultiWrapper(rs);
 }
 
+auto multijoin(Ms...)(Ms ms) {
+    /* ... */
+}
+
+auto multichain(Ms...)(Ms ms) {
+    alias M = Ms[0];
+    
+    static struct Multichain {
+        enum slots = Ms[0].slots;
+        
+        Ms baseRange;
+        size_t[slots.length] pos;
+        
+        auto multiFront(size_t slot)() {
+            if (pos[slot] >= Ms.length)
+                return typeof(ms[0].multiFront!slot())(SlotState.SLOT_EMPTY);
+            
+            
+            auto ret = (){
+                final switch (pos[slot]) {
+                    static foreach (i; 0 .. baseRange.length) {
+                        case i: return baseRange[i].multiFront!slot;
+                    }
+                }
+            }();
+            
+            if (ret.state == SlotState.SLOT_EMPTY) {
+                pos[slot] += 1;
+                return multiFront!slot;
+            }
+            
+            return ret;
+        }
+        
+        auto multiPopFront(size_t slot)() {
+            if (pos[slot] >= Ms.length)
+                return SlotReturn!void(SlotState.SLOT_EMPTY);
+            
+            auto ret = (){
+                final switch (pos[slot]) {
+                    static foreach (i; 0 .. baseRange.length) {
+                        case i: return baseRange[i].multiPopFront!slot;
+                    }
+                }
+            }();
+            
+            if (ret.state == SlotState.SLOT_EMPTY) {
+                pos[slot] += 1;
+                return multiPopFront!slot;
+            }
+            
+            return ret;
+        }
+    }
+    
+    return Multichain(ms);
+}
+
 /* Map a multi-range */
 template multimap(Fs...) {
     import std.meta : Stride;
@@ -250,6 +308,29 @@ template multifilter(Fs...) {
                         discardedFront[i] = true;
                 }
                 
+                bool allDiscarded = true;
+                
+                static foreach (i; depMap[baseSlot]) {
+                    if (!discardedFront[i])
+                        allDiscarded = false;
+                }
+                
+                if (allDiscarded) {
+                    auto ret = baseRange.multiPopFront!baseSlot;
+                    
+                    if (ret.state == SlotState.SLOT_EMPTY) {
+                        buffer[baseSlot].state = SlotState.SLOT_EMPTY;
+                        
+                    } else if (ret.state == SlotState.SLOT_GOOD) {
+                        static foreach(i; depMap[baseSlot])
+                            discardedFront[i] = false;
+                        
+                        fronted[baseSlot] = false;
+                        
+                        return multiFront!slot;
+                    }
+                }
+                
                 if (discardedFront[slot])
                     return typeof(buffer[baseSlot])(SlotState.SLOT_WAITING);
                 
@@ -281,6 +362,7 @@ template multifilter(Fs...) {
                         return ret;
                     
                     } else if (ret.state == SlotState.SLOT_WAITING) {
+                        discardedFront[slot] = wasDiscarded;
                         buffer[baseSlot].state = SlotState.SLOT_WAITING;
                         
                         return ret;
@@ -412,15 +494,17 @@ template multieach(Fs...) {
                 if (!emptySlots[slot]) {
                     auto ret = m.multiFront!slot;
                     
-                    if (ret.state == SlotState.SLOT_GOOD)
+                    if (ret.state == SlotState.SLOT_GOOD) {
                         inputFuncs[i](ret.value);
                     
-                    auto popRet = m.multiPopFront!slot;
-                    
-                    if (popRet.state == SlotState.SLOT_EMPTY)
-                        emptySlots[slot] = true;
+                        auto popRet = m.multiPopFront!slot;
                         
-                    else
+                        if (popRet.state == SlotState.SLOT_EMPTY)
+                            emptySlots[slot] = true;
+                            
+                        else
+                            allEmpty = false;
+                    } else if (ret.state == SlotState.SLOT_WAITING)
                         allEmpty = false;
                 }
             }
