@@ -1,7 +1,9 @@
 void main() {
     import std.stdio;
     import std.range;
-    import multirange;
+    import multirange.multirange;
+    
+    writeln(size_t.sizeof);
     
     auto X = 
         iota(100)

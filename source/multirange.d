@@ -1,4 +1,4 @@
-module multirange;
+module multirange.multirange;
 /*
     A multirange contains multiple ranges in slots.
     While this sounds simple, the interface is somewhat complex.
@@ -158,8 +158,6 @@ auto toMulti(Rs...)(Rs rs) {
     return MultiWrapper(rs);
 }
 
-/* Hopefully, many of the other functions can be reimplemented in terms of remap,
-   which will greatly reduce their complexity. */
 template remap(Is...) {
     enum outputSlots = Is.length;
     
