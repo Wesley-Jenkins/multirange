@@ -182,10 +182,6 @@ template remap(Is...) {
             bool[M.slots.length] empty;
             bool[inputSlots.length] popped;
             
-            this (M baseRange) {
-                this.baseRange = baseRange;
-            }
-            
             auto multiFront(size_t slot)() {
                 enum baseSlot = inputSlots[slot];
                 
@@ -425,7 +421,6 @@ auto multichooseAmong(Ms...)(size_t index, Ms ms) {
     return MultiChooseAmong(ms, index);
 }
 
-/* Map a multi-range */
 template multimap(Fs...) {
     import std.meta : Stride;
     
@@ -434,92 +429,34 @@ template multimap(Fs...) {
     
     alias inputSlots = Stride!(2, Fs);
     alias inputFuncs = Stride!(2, Fs[1 .. $]);
-    alias depMap = SlotDepMap!(inputSlots);
     
     auto multimap(M)(M m) {
-        import std.meta : Stride;
-        
-        enum slotMap = SlotMap!M;
-        alias slotTypes = SlotTypes!M;
+        alias M2 = typeof(m.remap!inputSlots());
         
         static struct MultiMap {
-            import std.array : staticArray;
-            import std.range : iota;
+            enum slots = M2.slots;
             
-            enum slots = staticArray!(outputSlots.iota);
-            
-            M baseRange;
-            bool[inputSlots.length] popped;
-            bool[inputSlots.length] empty;
-            
-            this (M baseRange) {
-                this.baseRange = baseRange;
-            }
+            M2 baseRange;
             
             auto multiFront(size_t slot)() {
-                enum baseSlot = inputSlots[slot];
-                alias baseFunc = inputFuncs[slot];
+                auto ret = baseRange.multiFront!slot;
                 
-                /* Swapped in order so we can use typeof(return) because I'm lazy */
-                if (!popped[slot]) {
-                    auto ret = baseRange.multiFront!baseSlot;
-                    
-                    if (ret.state == SlotState.SLOT_GOOD)
-                        return slotReturn(baseFunc(ret.value));
-                    
-                    else
-                        return typeof(return)(ret.state);
-                        
-                } else {
-                    return typeof(return)(SlotState.SLOT_WAITING);
-                }
+                if (ret.state == SlotState.SLOT_GOOD)
+                    return slotReturn(inputFuncs[slot](ret.value));
+                
+                else
+                    return typeof(return)(ret.state);
             }
             
             auto multiPopFront(size_t slot)() {
-                enum baseSlot = inputSlots[slot];
-                
-                if (empty[slot])
-                    return SlotReturn!void(SlotState.SLOT_EMPTY);
-                
-                if (popped[slot])
-                    return SlotReturn!void(SlotState.SLOT_WAITING);
-                
-                popped[slot] = true;
-                bool allPopped = true;
-                
-                static foreach(i; depMap[baseSlot]) {
-                    if (!popped[i])
-                        allPopped = false;
-                }
-                
-                if (allPopped) {
-                    auto ret = baseRange.multiPopFront!baseSlot;
-                    
-                    if (ret.state == SlotState.SLOT_WAITING) {
-                        popped[slot] = false;
-                        return SlotReturn!void(SlotState.SLOT_WAITING);
-                    }
-                    
-                    static foreach(i; depMap[baseSlot])
-                        popped[i] = false;
-                    
-                    if (ret.state == SlotState.SLOT_EMPTY) {
-                        static foreach(i; depMap[baseSlot])
-                            empty[i] = true;
-                    }
-                    
-                    return ret;
-                }
-                
-                return SlotReturn!void(SlotState.SLOT_GOOD);
+                return baseRange.multiPopFront!slot;
             }
         }
         
-        return MultiMap(m);
+        return MultiMap(m.remap!inputSlots);
     }
 }
 
-/* Filter a multi-range */
 template multifilter(Fs...) {
     import std.meta : Stride;
     
@@ -531,118 +468,59 @@ template multifilter(Fs...) {
     alias depMap = SlotDepMap!(inputSlots);
     
     auto multifilter(M)(M m) {
-        alias slotTypes = SlotTypes!M;
+        alias M2 = typeof(m.remap!inputSlots());
         
-        struct MultiFilter {
-            import std.array : staticArray;
-            import std.range : iota;
+        static struct MultiFilter {
+            enum slots = M2.slots;
             
-            enum slots = staticArray!(outputSlots.iota);
+            M2 baseRange;
+            bool[slots.length] blocked;
             
-            M baseRange;
-            slotTypes buffer;
-            bool[M.slots.length] fronted;
-            bool[inputSlots.length] discardedFront;
+            bool checkBlocked(size_t baseSlot)() {
+                enum deps = depMap[baseSlot];
+                
+                static foreach (i; deps) {
+                    if (!blocked[i])
+                        return false;
+                }
+                
+                static foreach (i; deps) {
+                    blocked[i] = false;
+                    baseRange.multiPopFront!i;
+                }
+                
+                return true;
+            }
             
             auto multiFront(size_t slot)() {
                 enum baseSlot = inputSlots[slot];
                 
-                if (buffer[baseSlot].state == SlotState.SLOT_EMPTY)
-                    return typeof(buffer[baseSlot])(SlotState.SLOT_EMPTY);
+                auto ret = baseRange.multiFront!slot;
                 
-                if (discardedFront[slot])
-                    return typeof(buffer[baseSlot])(SlotState.SLOT_WAITING);
-                
-                if (fronted[baseSlot])
-                    return buffer[baseSlot];
-                
-                buffer[baseSlot] = baseRange.multiFront!baseSlot;
-                
-                if (buffer[baseSlot].state != SlotState.SLOT_GOOD)
-                    return buffer[baseSlot];
-                
-                fronted[baseSlot] = true;
-                
-                static foreach (i; depMap[baseSlot]) {
-                    if (!inputFuncs[i](buffer[baseSlot].value))
-                        discardedFront[i] = true;
-                }
-                
-                bool allDiscarded = true;
-                
-                static foreach (i; depMap[baseSlot]) {
-                    if (!discardedFront[i])
-                        allDiscarded = false;
-                }
-                
-                if (allDiscarded) {
-                    auto ret = baseRange.multiPopFront!baseSlot;
-                    
-                    if (ret.state == SlotState.SLOT_EMPTY) {
-                        buffer[baseSlot].state = SlotState.SLOT_EMPTY;
+                if (ret.state == SlotState.SLOT_GOOD) {
+                    if (inputFuncs[slot](ret.value))
+                        return slotReturn(ret.value);
                         
-                    } else if (ret.state == SlotState.SLOT_GOOD) {
-                        static foreach(i; depMap[baseSlot])
-                            discardedFront[i] = false;
+                    else {
+                        blocked[slot] = true;
                         
-                        fronted[baseSlot] = false;
+                        if (checkBlocked!baseSlot)
+                            return multiFront!slot;
                         
-                        return multiFront!slot;
+                        else
+                            return typeof(return)(SlotState.SLOT_WAITING);
                     }
-                }
                 
-                if (discardedFront[slot])
-                    return typeof(buffer[baseSlot])(SlotState.SLOT_WAITING);
-                
-                return buffer[baseSlot];
+                } else
+                    return typeof(return)(ret.state);
             }
             
             auto multiPopFront(size_t slot)() {
-                enum baseSlot = inputSlots[slot];
-                
-                if (buffer[baseSlot].state == SlotState.SLOT_EMPTY)
-                    return SlotReturn!void(SlotState.SLOT_EMPTY);
-                
-                auto wasDiscarded = discardedFront[slot];
-                discardedFront[slot] = true;
-                
-                bool allDiscarded = true;
-                
-                static foreach (i; depMap[baseSlot]) {
-                    if (!discardedFront[i])
-                        allDiscarded = false;
-                }
-                
-                if (allDiscarded) {
-                    auto ret = baseRange.multiPopFront!baseSlot;
-                    
-                    if (ret.state == SlotState.SLOT_EMPTY) {
-                        buffer[baseSlot].state = SlotState.SLOT_EMPTY;
-                        
-                        return ret;
-                    
-                    } else if (ret.state == SlotState.SLOT_WAITING) {
-                        discardedFront[slot] = wasDiscarded;
-                        buffer[baseSlot].state = SlotState.SLOT_WAITING;
-                        
-                        return ret;
-                        
-                    } else {
-                        static foreach(i; depMap[baseSlot])
-                            discardedFront[i] = false;
-                        
-                        fronted[baseSlot] = false;
-                    }
-                }
-                
-                if (wasDiscarded)
-                    return typeof(return)(SlotState.SLOT_WAITING);
-                else
-                    return typeof(return)(SlotState.SLOT_GOOD);
+                return baseRange.multiPopFront!slot;
             }
         }
         
-        return MultiFilter(m);
+        return MultiFilter(m.remap!inputSlots);
     }
 }
 
@@ -654,80 +532,42 @@ template multiuntil(Fs...) {
     
     alias inputSlots = Stride!(2, Fs);
     alias inputFuncs = Stride!(2, Fs[1 .. $]);
-    alias depMap = SlotDepMap!(inputSlots);
     
     auto multiuntil(M)(M m) {
+        alias M2 = typeof(m.remap!inputSlots());
+        
         static struct MultiUntil {
-            import std.array : staticArray;
-            import std.range : iota;
+            enum slots = M2.slots;
             
-            enum slots = staticArray!(outputSlots.iota);
-            
-            M baseRange;
-            bool[inputSlots.length] empty;
-            bool[inputSlots.length] popped;
+            M2 baseRange;
+            bool[slots.length] empty;
             
             auto multiFront(size_t slot)() {
-                enum baseSlot = inputSlots[slot];
-                
                 if (empty[slot])
-                    return typeof(baseRange.multiFront!baseSlot())(SlotState.SLOT_EMPTY);
+                    return typeof(baseRange.multiFront!slot())(SlotState.SLOT_EMPTY);
                 
-                if (popped[slot])
-                    return typeof(return)(SlotState.SLOT_WAITING);
+                auto ret = baseRange.multiFront!slot;
                 
-                auto ret = baseRange.multiFront!baseSlot;
+                if (ret.state == SlotState.SLOT_GOOD) {
+                    if (inputFuncs[slot](ret.value))
+                        empty[slots] = true;
+                    
+                    return slotReturn(ret.value);
                 
-                if (ret.state != SlotState.SLOT_GOOD)
-                    return ret;
-                
-                if (inputFuncs[slot](ret.value))
-                    empty[slot] = true;
-                
-                return ret;
+                } else
+                    return typeof(return)(ret.state);
             }
             
             auto multiPopFront(size_t slot)() {
-                enum baseSlot = inputSlots[slot];
-                
                 if (empty[slot])
                     return SlotReturn!void(SlotState.SLOT_EMPTY);
-                
-                if (popped[slot])
-                    return SlotReturn!void(SlotState.SLOT_WAITING);
-                
-                popped[slot] = true;
-                bool allPopped = true;
-                
-                static foreach(i; depMap[baseSlot]) {
-                    if (!empty[i] && !popped[i])
-                        allPopped = false;
-                }
-                
-                if (allPopped) {
-                    auto ret = baseRange.multiPopFront!baseSlot;
                     
-                    if (ret.state == SlotState.SLOT_WAITING) {
-                        popped[slot] = false;
-                        return SlotReturn!void(SlotState.SLOT_WAITING);
-                    }
-                    
-                    static foreach(i; depMap[baseSlot])
-                        popped[i] = false;
-                    
-                    if (ret.state == SlotState.SLOT_EMPTY) {
-                        static foreach(i; depMap[baseSlot])
-                            empty[i] = true;
-                    }
-                    
-                    return ret;
-                }
-                
-                return SlotReturn!void(SlotState.SLOT_GOOD);
+                else
+                    return baseRange.multiPopFront!slot;
             }
         }
         
-        return MultiUntil(m);
+        return MultiUntil(m.remap!inputSlots);
     }
 }
 
