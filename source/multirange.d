@@ -158,6 +158,92 @@ auto toMulti(Rs...)(Rs rs) {
     return MultiWrapper(rs);
 }
 
+/* Hopefully, many of the other functions can be reimplemented in terms of remap,
+   which will greatly reduce their complexity. */
+template remap(Is...) {
+    enum outputSlots = Is.length;
+    
+    alias inputSlots = Is;
+    alias depMap = SlotDepMap!(inputSlots);
+    
+    auto remap(M)(M m) {
+        import std.meta : Stride;
+        
+        enum slotMap = SlotMap!M;
+        alias slotTypes = SlotTypes!M;
+        
+        static struct Remap {
+            import std.array : staticArray;
+            import std.range : iota;
+            
+            enum slots = staticArray!(outputSlots.iota);
+            
+            M baseRange;
+            bool[M.slots.length] empty;
+            bool[inputSlots.length] popped;
+            
+            this (M baseRange) {
+                this.baseRange = baseRange;
+            }
+            
+            auto multiFront(size_t slot)() {
+                enum baseSlot = inputSlots[slot];
+                
+                /* Swapped in order so we can use typeof(return) because I'm lazy */
+                if (!popped[slot]) {
+                    if (!empty[baseSlot])
+                        return baseRange.multiFront!baseSlot;
+                    
+                    else
+                        return typeof(return)(SlotState.SLOT_EMPTY);
+                        
+                } else {
+                    return typeof(return)(SlotState.SLOT_WAITING);
+                }
+            }
+            
+            auto multiPopFront(size_t slot)() {
+                enum baseSlot = inputSlots[slot];
+                
+                if (empty[baseSlot])
+                    return SlotReturn!void(SlotState.SLOT_EMPTY);
+                
+                if (popped[slot])
+                    return SlotReturn!void(SlotState.SLOT_WAITING);
+                
+                popped[slot] = true;
+                bool allPopped = true;
+                
+                static foreach(i; depMap[baseSlot]) {
+                    if (!popped[i])
+                        allPopped = false;
+                }
+                
+                if (allPopped) {
+                    auto ret = baseRange.multiPopFront!baseSlot;
+                    
+                    if (ret.state == SlotState.SLOT_WAITING) {
+                        popped[slot] = false;
+                        return SlotReturn!void(SlotState.SLOT_WAITING);
+                    }
+                    
+                    static foreach(i; depMap[baseSlot])
+                        popped[i] = false;
+                    
+                    if (ret.state == SlotState.SLOT_EMPTY)
+                        empty[baseSlot] = true;
+                    
+                    return ret;
+                }
+                
+                return SlotReturn!void(SlotState.SLOT_GOOD);
+            }
+        }
+        
+        return Remap(m);
+    }
+}
+
 auto multitake(M, Is...)(M m, Is indices) {
     static struct MultiTake {
         import std.array : staticArray;
