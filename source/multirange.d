@@ -705,3 +705,23 @@ auto arrays(M)(M m) {
     
     return ret;
 }
+
+auto flatArray(M)(M m) {
+    typeof(m.multiFront!0().value)[] ret;
+    
+    enum mixinString = (){
+        import std.conv : to;
+        
+        string ret;
+        
+        foreach (i, slot; M.slots) {
+            ret ~= slot.to!string ~ ", " ~ "(x) { ret ~= x; }, ";
+        }
+        
+        return "m.multieach!(" ~ ret ~ ");";
+    }();
+    
+    mixin(mixinString);
+    
+    return ret;
+}
