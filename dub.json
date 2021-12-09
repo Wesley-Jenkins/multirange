@@ -5,5 +5,19 @@
 	"copyright": "Copyright © 2021, Wesley Jenkins",
 	"description": "A library for multiranges",
 	"license": "zlib",
-	"name": "multirange"
+	"name": "multirange",
+    
+    "configurations": [
+        {
+            "name": "lib",
+            "targetType": "library",
+            "excludedSourceFiles": ["source/example.d"],
+        },
+        
+        {
+            "name": "example",
+            "targetType": "executable",
+            "mainSourceFile": "source/example.d",
+        }
+    ],
 }
